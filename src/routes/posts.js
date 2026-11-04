@@ -1,14 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const path = require('path');
-const { Post, User, Personnel } = require('../models');
+const { Post, User, Personnel, Comment } = require('../models');
 const { authenticate, authorize } = require('../middleware/auth');
+const { makeStorage } = require('../config/cloudinary');
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, process.env.UPLOAD_DIR || './uploads'),
-  filename: (req, file, cb) => cb(null, `post_${Date.now()}${path.extname(file.originalname)}`),
-});
+const storage = process.env.CLOUDINARY_CLOUD_NAME
+  ? makeStorage('posts')
+  : multer.diskStorage({
+      destination: (req, file, cb) => cb(null, process.env.UPLOAD_DIR || './uploads'),
+      filename: (req, file, cb) => cb(null, `post_${Date.now()}_${file.originalname}`),
+    });
 const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
 router.use(authenticate);
@@ -27,13 +29,15 @@ router.get('/', async (req, res) => {
       include: [
         { model: Personnel, as: 'author', attributes: ['id', 'fullName', 'dharmName'], required: false },
         { model: User, as: 'userAuthor', attributes: ['id', 'username'], required: false },
+        { model: Comment, as: 'comments', attributes: ['id'], required: false },
       ],
       order: [['isPinned', 'DESC'], ['createdAt', 'DESC']],
       limit: parseInt(limit),
       offset: (parseInt(page) - 1) * parseInt(limit),
+      distinct: true,
     });
 
-    res.json({ total: count, page: parseInt(page), data: rows });
+    res.json({ total: count, page: parseInt(page), data: rows.map(r => ({ ...r.toJSON(), commentCount: r.comments?.length ?? 0 })) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Lỗi server' });
@@ -52,13 +56,15 @@ router.get('/pending', authorize('admin', 'truotri', 'thuki'), async (req, res) 
       include: [
         { model: Personnel, as: 'author', attributes: ['id', 'fullName', 'dharmName'], required: false },
         { model: User, as: 'userAuthor', attributes: ['id', 'username'], required: false },
+        { model: Comment, as: 'comments', attributes: ['id'], required: false },
       ],
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit),
       offset: (parseInt(page) - 1) * parseInt(limit),
+      distinct: true,
     });
 
-    res.json({ total: count, page: parseInt(page), data: rows });
+    res.json({ total: count, page: parseInt(page), data: rows.map(r => ({ ...r.toJSON(), commentCount: r.comments?.length ?? 0 })) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Lỗi server' });
@@ -84,7 +90,7 @@ router.get('/:id', async (req, res) => {
 router.post('/', upload.single('coverImage'), async (req, res) => {
   try {
     const data = { ...req.body };
-    if (req.file) data.coverImage = `/uploads/${req.file.filename}`;
+    if (req.file) data.coverImage = req.file.path || `/uploads/${req.file.filename}`;
     data.authorId = req.user?.personnelId || null;
     data.userId = req.user.id;
     const isEditor = EDITOR_ROLES.includes(req.user?.role);
@@ -104,7 +110,7 @@ router.put('/:id', authorize('admin', 'truotri', 'thuki'), upload.single('coverI
     const post = await Post.findByPk(req.params.id);
     if (!post) return res.status(404).json({ message: 'Không tìm thấy bài viết' });
     const data = { ...req.body };
-    if (req.file) data.coverImage = `/uploads/${req.file.filename}`;
+    if (req.file) data.coverImage = req.file.path || `/uploads/${req.file.filename}`;
     await post.update(data);
     res.json(post);
   } catch (error) {
@@ -143,6 +149,65 @@ router.patch('/:id/reject', authorize('admin', 'truotri', 'thuki'), async (req, 
     await post.update({ status: 'rejected' });
     res.json(post);
   } catch {
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+});
+
+/* ── Comment routes ───────────────────────────────────────── */
+
+router.get('/:id/comments', async (req, res) => {
+  try {
+    const comments = await Comment.findAll({
+      where: { postId: req.params.id },
+      include: [
+        { model: Personnel, as: 'commentAuthor', attributes: ['id', 'fullName', 'dharmName'], required: false },
+        { model: User, as: 'commentUser', attributes: ['id', 'username'], required: false },
+      ],
+      order: [['createdAt', 'ASC']],
+    });
+    res.json(comments);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+});
+
+router.post('/:id/comments', async (req, res) => {
+  try {
+    const post = await Post.findByPk(req.params.id);
+    if (!post) return res.status(404).json({ message: 'Không tìm thấy bài viết' });
+    if (!req.body.content?.trim()) return res.status(400).json({ message: 'Nội dung không được để trống' });
+
+    const comment = await Comment.create({
+      postId: req.params.id,
+      content: req.body.content.trim(),
+      authorId: req.user?.personnelId || null,
+      userId: req.user.id,
+    });
+    const result = await Comment.findByPk(comment.id, {
+      include: [
+        { model: Personnel, as: 'commentAuthor', attributes: ['id', 'fullName', 'dharmName'], required: false },
+        { model: User, as: 'commentUser', attributes: ['id', 'username'], required: false },
+      ],
+    });
+    res.status(201).json(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+});
+
+router.delete('/:postId/comments/:commentId', async (req, res) => {
+  try {
+    const comment = await Comment.findOne({ where: { id: req.params.commentId, postId: req.params.postId } });
+    if (!comment) return res.status(404).json({ message: 'Không tìm thấy bình luận' });
+    const isOwn = comment.userId === req.user.id;
+    const isEditor = ['admin', 'truotri'].includes(req.user?.role);
+    if (!isOwn && !isEditor) return res.status(403).json({ message: 'Không có quyền xóa' });
+    await comment.destroy();
+    res.json({ message: 'Đã xóa' });
+  } catch (error) {
+    console.error(error);
     res.status(500).json({ message: 'Lỗi server' });
   }
 });

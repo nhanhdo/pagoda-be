@@ -6,11 +6,14 @@ const { Op } = require('sequelize');
 const { Personnel, Department, User } = require('../models');
 const { authenticate, authorize } = require('../middleware/auth');
 const bcrypt = require('bcryptjs');
+const { makeStorage } = require('../config/cloudinary');
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, process.env.UPLOAD_DIR || './uploads'),
-  filename: (req, file, cb) => cb(null, `photo_${Date.now()}${path.extname(file.originalname)}`),
-});
+const storage = process.env.CLOUDINARY_CLOUD_NAME
+  ? makeStorage('personnel')
+  : multer.diskStorage({
+      destination: (req, file, cb) => cb(null, process.env.UPLOAD_DIR || './uploads'),
+      filename: (req, file, cb) => cb(null, `photo_${Date.now()}${path.extname(file.originalname)}`),
+    });
 const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
 router.use(authenticate);
@@ -64,7 +67,7 @@ router.get('/:id', async (req, res) => {
 router.post('/', authorize('admin', 'truotri', 'thuki'), upload.single('photo'), async (req, res) => {
   try {
     const data = { ...req.body };
-    if (req.file) data.photo = `/uploads/${req.file.filename}`;
+    if (req.file) data.photo = req.file.path || `/uploads/${req.file.filename}`;
 
     const count = await Personnel.count();
     data.code = data.code || `NS${String(count + 1).padStart(4, '0')}`;
@@ -97,7 +100,7 @@ router.put('/:id', authorize('admin', 'truotri', 'thuki'), upload.single('photo'
     if (!personnel) return res.status(404).json({ message: 'Không tìm thấy nhân sự' });
 
     const data = { ...req.body };
-    if (req.file) data.photo = `/uploads/${req.file.filename}`;
+    if (req.file) data.photo = req.file.path || `/uploads/${req.file.filename}`;
 
     await personnel.update(data);
     res.json(personnel);

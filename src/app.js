@@ -20,6 +20,7 @@ app.use('/api/work-assignments', require('./routes/workAssignments'));
 app.use('/api/trainings', require('./routes/trainings'));
 app.use('/api/reward-disciplines', require('./routes/rewardDisciplines'));
 app.use('/api/buddhist-followers', require('./routes/buddhistFollowers'));
+app.use('/api/donations', require('./routes/donations'));
 app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/posts', require('./routes/posts'));
 app.use('/api/users', require('./routes/users'));
