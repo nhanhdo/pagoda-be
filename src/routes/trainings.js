@@ -49,10 +49,17 @@ router.put('/:id', authorize('admin', 'truotri', 'thuki'), async (req, res) => {
 
 router.post('/:id/participants', authorize('admin', 'truotri', 'thuki'), async (req, res) => {
   try {
-    const { personnelIds } = req.body;
+    const { personnelIds = [] } = req.body;
+    // No unique index on (trainingId, personnelId), so ignoreDuplicates can't dedupe — filter existing enrolments here
+    const existing = await TrainingParticipant.findAll({
+      where: { trainingId: req.params.id },
+      attributes: ['personnelId'],
+      raw: true,
+    });
+    const enrolled = new Set(existing.map(e => e.personnelId));
+    const toAdd = [...new Set(personnelIds)].filter(pid => !enrolled.has(pid));
     const participants = await TrainingParticipant.bulkCreate(
-      personnelIds.map(pid => ({ trainingId: req.params.id, personnelId: pid, registrationDate: new Date() })),
-      { ignoreDuplicates: true }
+      toAdd.map(pid => ({ trainingId: req.params.id, personnelId: pid, registrationDate: new Date() }))
     );
     res.status(201).json(participants);
   } catch (error) {
@@ -66,6 +73,30 @@ router.put('/:id/participants/:participantId', authorize('admin', 'truotri', 'th
     if (!participant) return res.status(404).json({ message: 'Không tìm thấy học viên' });
     await participant.update(req.body);
     res.json(participant);
+  } catch (error) {
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+});
+
+router.delete('/:id/participants/:participantId', authorize('admin', 'truotri', 'thuki'), async (req, res) => {
+  try {
+    const deleted = await TrainingParticipant.destroy({
+      where: { id: req.params.participantId, trainingId: req.params.id },
+    });
+    if (!deleted) return res.status(404).json({ message: 'Không tìm thấy học viên' });
+    res.json({ message: 'Đã xóa học viên' });
+  } catch (error) {
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+});
+
+router.delete('/:id', authorize('admin', 'truotri'), async (req, res) => {
+  try {
+    const training = await Training.findByPk(req.params.id);
+    if (!training) return res.status(404).json({ message: 'Không tìm thấy khóa học' });
+    await TrainingParticipant.destroy({ where: { trainingId: training.id } });
+    await training.destroy();
+    res.json({ message: 'Đã xóa khóa học' });
   } catch (error) {
     res.status(500).json({ message: 'Lỗi server' });
   }

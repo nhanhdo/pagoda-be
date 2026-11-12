@@ -17,6 +17,8 @@ router.get('/', async (req, res) => {
         { purpose: { [Op.like]: `%${search}%` } },
         { donorName: { [Op.like]: `%${search}%` } },
         { notes: { [Op.like]: `%${search}%` } },
+        { '$buddhistFollower.fullName$': { [Op.like]: `%${search}%` } },
+        { '$buddhistFollower.dharmName$': { [Op.like]: `%${search}%` } },
       ];
     }
     if (buddhistFollowerId) where.buddhistFollowerId = buddhistFollowerId;
@@ -39,6 +41,8 @@ router.get('/', async (req, res) => {
       limit: parseInt(limit),
       offset: parseInt(offset),
       order: [['donationDate', 'DESC'], ['createdAt', 'DESC']],
+      subQuery: false,
+      distinct: true,
     });
 
     res.json({ total: count, page: parseInt(page), data: rows });
@@ -63,15 +67,34 @@ router.get('/summary', async (req, res) => {
     const totalAmount = await Donation.sum('amount', { where }) || 0;
     const count = await Donation.count({ where });
 
-    // This month
-    const now = new Date();
-    const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
-    const thisMonthAmount = await Donation.sum('amount', {
-      where: { donationDate: { [Op.between]: [monthStart, monthEnd] } },
-    }) || 0;
+    const anonymousCount = await Donation.count({
+      where: {
+        ...where,
+        buddhistFollowerId: null,
+        [Op.or]: [{ donorName: null }, { donorName: '' }],
+      },
+    });
 
-    res.json({ totalAmount, count, thisMonthAmount });
+    const methodRows = await Donation.findAll({
+      where,
+      attributes: ['paymentMethod', [sequelize.fn('SUM', sequelize.col('amount')), 'amount'], [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
+      group: ['paymentMethod'],
+      raw: true,
+    });
+    const byMethod = methodRows.map(r => ({ method: r.paymentMethod, amount: Number(r.amount) || 0, count: Number(r.count) || 0 }));
+
+    // Month bounds as local calendar dates (toISOString would shift to UTC and drop the last day)
+    const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const now = new Date();
+    const monthSum = async (offset) => {
+      const start = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+      const end = new Date(now.getFullYear(), now.getMonth() + offset + 1, 0);
+      return await Donation.sum('amount', { where: { donationDate: { [Op.between]: [ymd(start), ymd(end)] } } }) || 0;
+    };
+    const thisMonthAmount = await monthSum(0);
+    const lastMonthAmount = await monthSum(-1);
+
+    res.json({ totalAmount, count, thisMonthAmount, lastMonthAmount, anonymousCount, byMethod });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Lỗi server' });

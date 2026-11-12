@@ -71,6 +71,41 @@ router.get('/pending', authorize('admin', 'truotri', 'thuki'), async (req, res) 
   }
 });
 
+// GET recent comments relevant to the current user: on posts they wrote or commented on, excluding their own.
+// Registered before '/:id' so "comments" isn't parsed as a post id.
+router.get('/comments/recent', async (req, res) => {
+  try {
+    const { Op } = require('sequelize');
+    const me = req.user.id;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 50);
+    const days = Math.min(parseInt(req.query.days, 10) || 7, 30);
+
+    const myPosts = await Post.findAll({ where: { userId: me }, attributes: ['id'], raw: true });
+    const commented = await Comment.findAll({ where: { userId: me }, attributes: ['postId'], group: ['postId'], raw: true });
+    const postIds = [...new Set([...myPosts.map(p => p.id), ...commented.map(c => c.postId)])];
+    if (!postIds.length) return res.json([]);
+
+    const comments = await Comment.findAll({
+      where: {
+        postId: { [Op.in]: postIds },
+        userId: { [Op.ne]: me },
+        createdAt: { [Op.gte]: new Date(Date.now() - days * 24 * 60 * 60 * 1000) },
+      },
+      include: [
+        { model: Personnel, as: 'commentAuthor', attributes: ['id', 'fullName', 'dharmName'], required: false },
+        { model: User, as: 'commentUser', attributes: ['id', 'username'], required: false },
+        { model: Post, as: 'post', attributes: ['id', 'title', 'userId'], required: true },
+      ],
+      order: [['createdAt', 'DESC']],
+      limit,
+    });
+    res.json(comments.map(c => ({ ...c.toJSON(), onMyPost: c.post?.userId === me })));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Lỗi server' });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   try {
     const post = await Post.findByPk(req.params.id, {

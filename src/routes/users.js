@@ -71,6 +71,17 @@ router.put('/:id', async (req, res) => {
 
     const { username, role, personnelId, isActive } = req.body;
 
+    const isSelf = user.id === req.user.id;
+    const locking = isActive === false;
+    const demoting = role && role !== 'admin' && user.role === 'admin';
+    if (isSelf && (locking || demoting)) {
+      return res.status(400).json({ message: 'Không thể tự khoá hoặc hạ quyền tài khoản đang đăng nhập' });
+    }
+    if (user.role === 'admin' && user.isActive && (locking || demoting)) {
+      const activeAdmins = await User.count({ where: { role: 'admin', isActive: true } });
+      if (activeAdmins <= 1) return res.status(400).json({ message: 'Phải còn ít nhất một quản trị viên đang hoạt động' });
+    }
+
     if (username && username !== user.username) {
       const existing = await User.findOne({ where: { username } });
       if (existing) return res.status(400).json({ message: 'Tên đăng nhập đã tồn tại' });
@@ -117,6 +128,10 @@ router.delete('/:id', async (req, res) => {
     }
     const user = await User.findByPk(req.params.id);
     if (!user) return res.status(404).json({ message: 'Không tìm thấy tài khoản' });
+    if (user.role === 'admin' && user.isActive) {
+      const activeAdmins = await User.count({ where: { role: 'admin', isActive: true } });
+      if (activeAdmins <= 1) return res.status(400).json({ message: 'Phải còn ít nhất một quản trị viên đang hoạt động' });
+    }
     await user.destroy();
     res.json({ message: 'Đã xóa tài khoản' });
   } catch {
