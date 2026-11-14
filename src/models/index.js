@@ -11,6 +11,12 @@ const BuddhistFollower = require('./BuddhistFollower');
 const Donation = require('./Donation');
 const Post = require('./Post');
 const Comment = require('./Comment');
+const Fund = require('./Fund');
+const Expense = require('./Expense');
+const Ceremony = require('./Ceremony');
+const CeremonyRegistration = require('./CeremonyRegistration');
+const CeremonyEntry = require('./CeremonyEntry');
+const MemorialTablet = require('./MemorialTablet');
 
 // Associations
 Department.hasMany(Personnel, { foreignKey: 'departmentId', as: 'members' });
@@ -52,6 +58,28 @@ Comment.belongsTo(Personnel, { foreignKey: 'authorId', as: 'commentAuthor' });
 User.hasMany(Comment, { foreignKey: 'userId', as: 'userComments' });
 Comment.belongsTo(User, { foreignKey: 'userId', as: 'commentUser' });
 
+// Finance
+Fund.hasMany(Donation, { foreignKey: 'fundId', as: 'donations', constraints: false });
+Donation.belongsTo(Fund, { foreignKey: 'fundId', as: 'fund', constraints: false });
+Fund.hasMany(Expense, { foreignKey: 'fundId', as: 'expenses' });
+Expense.belongsTo(Fund, { foreignKey: 'fundId', as: 'fund' });
+Expense.belongsTo(User, { foreignKey: 'createdBy', as: 'creator', constraints: false });
+Expense.belongsTo(User, { foreignKey: 'approvedBy', as: 'approver', constraints: false });
+
+// Ceremonies (cầu an / cầu siêu) & memorial tablets — soft links (constraints: false) so
+// deleting a fund/follower/donation never cascades into ceremony records.
+Ceremony.belongsTo(Fund, { foreignKey: 'defaultFundId', as: 'defaultFund', constraints: false });
+Ceremony.hasMany(CeremonyRegistration, { foreignKey: 'ceremonyId', as: 'registrations' });
+CeremonyRegistration.belongsTo(Ceremony, { foreignKey: 'ceremonyId', as: 'ceremony' });
+CeremonyRegistration.hasMany(CeremonyEntry, { foreignKey: 'registrationId', as: 'entries' });
+CeremonyEntry.belongsTo(CeremonyRegistration, { foreignKey: 'registrationId', as: 'registration' });
+CeremonyRegistration.belongsTo(Fund, { foreignKey: 'fundId', as: 'fund', constraints: false });
+CeremonyRegistration.belongsTo(Donation, { foreignKey: 'donationId', as: 'donation', constraints: false });
+CeremonyRegistration.belongsTo(BuddhistFollower, { foreignKey: 'buddhistFollowerId', as: 'buddhistFollower', constraints: false });
+CeremonyRegistration.belongsTo(User, { foreignKey: 'createdBy', as: 'creator', constraints: false });
+CeremonyEntry.belongsTo(MemorialTablet, { foreignKey: 'memorialTabletId', as: 'tablet', constraints: false });
+MemorialTablet.belongsTo(BuddhistFollower, { foreignKey: 'buddhistFollowerId', as: 'buddhistFollower', constraints: false });
+
 module.exports = {
   sequelize,
   User,
@@ -66,4 +94,10 @@ module.exports = {
   Donation,
   Post,
   Comment,
+  Fund,
+  Expense,
+  Ceremony,
+  CeremonyRegistration,
+  CeremonyEntry,
+  MemorialTablet,
 };

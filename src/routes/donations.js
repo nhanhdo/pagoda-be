@@ -1,27 +1,54 @@
 const express = require('express');
 const router = express.Router();
 const { Op } = require('sequelize');
-const { sequelize, Donation, BuddhistFollower } = require('../models');
+const { sequelize, Donation, BuddhistFollower, Fund } = require('../models');
+const { nextReceiptNo, defaultFundId, withRetry, likeOp, activeFund, num } = require('../services/finance');
 const { authenticate, authorize } = require('../middleware/auth');
 
 router.use(authenticate);
 
-router.get('/', async (req, res) => {
+// Donation data (donors, amounts) is finance data: readable by the finance roles and trưởng ban (who can record donations).
+const READ = ['admin', 'truotri', 'thuki', 'truongban'];
+const EDITABLE = ['buddhistFollowerId', 'donorName', 'amount', 'donationDate', 'purpose', 'paymentMethod', 'receivedBy', 'fundId', 'notes'];
+const METHODS = ['tiền_mặt', 'chuyển_khoản', 'khác'];
+
+function pickEditable(body = {}) {
+  const out = {};
+  EDITABLE.forEach(k => { if (body[k] !== undefined) out[k] = body[k] === '' ? null : body[k]; });
+  return out;
+}
+
+/** Returns an error message or null. */
+function validateDonation(d, partial) {
+  if (!partial || d.amount !== undefined) {
+    if (!(num(d.amount) > 0)) return 'Số tiền cúng dường phải lớn hơn 0';
+  }
+  if (!partial || d.donationDate !== undefined) {
+    if (!d.donationDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(d.donationDate).slice(0, 10))) return 'Chọn ngày cúng dường hợp lệ';
+  }
+  if (d.paymentMethod !== undefined && d.paymentMethod !== null && !METHODS.includes(d.paymentMethod)) return 'Hình thức cúng dường không hợp lệ';
+  return null;
+}
+
+router.get('/', authorize(...READ), async (req, res) => {
   try {
-    const { page = 1, limit = 20, search, startDate, endDate, buddhistFollowerId } = req.query;
+    const { page = 1, limit = 20, search, startDate, endDate, buddhistFollowerId, fundId } = req.query;
     const offset = (page - 1) * limit;
     const where = {};
 
     if (search) {
+      const like = { [likeOp()]: `%${search}%` };
       where[Op.or] = [
-        { purpose: { [Op.like]: `%${search}%` } },
-        { donorName: { [Op.like]: `%${search}%` } },
-        { notes: { [Op.like]: `%${search}%` } },
-        { '$buddhistFollower.fullName$': { [Op.like]: `%${search}%` } },
-        { '$buddhistFollower.dharmName$': { [Op.like]: `%${search}%` } },
+        { purpose: like },
+        { donorName: like },
+        { notes: like },
+        { receiptNo: like },
+        { '$buddhistFollower.fullName$': like },
+        { '$buddhistFollower.dharmName$': like },
       ];
     }
     if (buddhistFollowerId) where.buddhistFollowerId = buddhistFollowerId;
+    if (fundId) where.fundId = fundId;
     if (startDate && endDate) {
       where.donationDate = { [Op.between]: [startDate, endDate] };
     } else if (startDate) {
@@ -37,7 +64,7 @@ router.get('/', async (req, res) => {
         as: 'buddhistFollower',
         attributes: ['id', 'fullName', 'dharmName', 'code'],
         required: false,
-      }],
+      }, { model: Fund, as: 'fund', attributes: ['id', 'code', 'name', 'color'], required: false }],
       limit: parseInt(limit),
       offset: parseInt(offset),
       order: [['donationDate', 'DESC'], ['createdAt', 'DESC']],
@@ -52,10 +79,11 @@ router.get('/', async (req, res) => {
   }
 });
 
-router.get('/summary', async (req, res) => {
+router.get('/summary', authorize(...READ), async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, fundId } = req.query;
     const where = {};
+    if (fundId) where.fundId = fundId;
     if (startDate && endDate) {
       where.donationDate = { [Op.between]: [startDate, endDate] };
     } else if (startDate) {
@@ -83,6 +111,18 @@ router.get('/summary', async (req, res) => {
     });
     const byMethod = methodRows.map(r => ({ method: r.paymentMethod, amount: Number(r.amount) || 0, count: Number(r.count) || 0 }));
 
+    const fundRows = await Donation.findAll({
+      where,
+      attributes: ['fundId', [sequelize.fn('SUM', sequelize.col('amount')), 'amount'], [sequelize.fn('COUNT', sequelize.col('id')), 'count']],
+      group: ['fundId'],
+      raw: true,
+    });
+    const funds = await Fund.findAll({ attributes: ['id', 'name', 'color'], raw: true });
+    const byFund = fundRows.map(r => {
+      const fd = funds.find(x => x.id === r.fundId);
+      return { fundId: r.fundId, name: fd?.name || '—', color: fd?.color, amount: Number(r.amount) || 0, count: Number(r.count) || 0 };
+    });
+
     // Month bounds as local calendar dates (toISOString would shift to UTC and drop the last day)
     const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const now = new Date();
@@ -94,7 +134,7 @@ router.get('/summary', async (req, res) => {
     const thisMonthAmount = await monthSum(0);
     const lastMonthAmount = await monthSum(-1);
 
-    res.json({ totalAmount, count, thisMonthAmount, lastMonthAmount, anonymousCount, byMethod });
+    res.json({ totalAmount, count, thisMonthAmount, lastMonthAmount, anonymousCount, byMethod, byFund });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Lỗi server' });
@@ -109,7 +149,16 @@ async function syncFollowerContribution(buddhistFollowerId) {
 
 router.post('/', authorize('admin', 'truotri', 'thuki', 'truongban'), async (req, res) => {
   try {
-    const donation = await Donation.create(req.body);
+    const body = pickEditable(req.body);
+    const err = validateDonation(body, false);
+    if (err) return res.status(400).json({ message: err });
+    const fundId = body.fundId || await defaultFundId();
+    if (!(await activeFund(fundId))) return res.status(400).json({ message: 'Quỹ không tồn tại hoặc đã ngừng sử dụng' });
+    // Retry regenerates the receipt number if another request took it first
+    const donation = await withRetry(() => sequelize.transaction(async (transaction) => {
+      const receiptNo = await nextReceiptNo(body.donationDate, transaction);
+      return Donation.create({ ...body, fundId, receiptNo }, { transaction });
+    }));
     await syncFollowerContribution(donation.buddhistFollowerId);
     res.status(201).json(donation);
   } catch (error) {
@@ -123,7 +172,15 @@ router.put('/:id', authorize('admin', 'truotri', 'thuki', 'truongban'), async (r
     const donation = await Donation.findByPk(req.params.id);
     if (!donation) return res.status(404).json({ message: 'Không tìm thấy' });
     const oldFollowerId = donation.buddhistFollowerId;
-    await donation.update(req.body);
+    const body = pickEditable(req.body);
+    const err = validateDonation(body, true);
+    if (err) return res.status(400).json({ message: err });
+    if (body.fundId === null) body.fundId = await defaultFundId();
+    // A new fund must be active; keeping the current (possibly deactivated) fund is allowed
+    if (body.fundId !== undefined && Number(body.fundId) !== donation.fundId && !(await activeFund(body.fundId))) {
+      return res.status(400).json({ message: 'Quỹ không tồn tại hoặc đã ngừng sử dụng' });
+    }
+    await donation.update(body);
     const ids = [...new Set([oldFollowerId, donation.buddhistFollowerId].filter(Boolean))];
     for (const id of ids) await syncFollowerContribution(id);
     res.json(donation);

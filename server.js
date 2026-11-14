@@ -25,11 +25,14 @@ async function startServer() {
       await sequelize.query("ALTER TABLE posts ADD COLUMN userId INTEGER").catch(() => {});
       await sequelize.query("ALTER TABLE posts ADD COLUMN status TEXT DEFAULT 'approved'").catch(() => {});
     }
+    await require('./src/config/migrate').runMigrations(sequelize);
     console.log('Database đã đồng bộ.');
 
     app.listen(PORT, () => {
       console.log(`Server đang chạy tại http://localhost:${PORT}`);
     });
+
+    require('./src/services/backup').scheduleDailyBackups();
   } catch (error) {
     console.error('Không thể khởi động server:', error);
     process.exit(1);

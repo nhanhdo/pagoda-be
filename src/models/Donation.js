@@ -13,6 +13,8 @@ const Donation = sequelize.define('Donation', {
     defaultValue: 'tiền_mặt',
   },
   receivedBy: { type: DataTypes.STRING(100), allowNull: true, comment: 'Người nhận' },
+  fundId: { type: DataTypes.INTEGER, allowNull: true },
+  receiptNo: { type: DataTypes.STRING(20), allowNull: true },
   notes: { type: DataTypes.TEXT, allowNull: true },
 }, {
   tableName: 'donations',
