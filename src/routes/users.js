@@ -4,6 +4,8 @@ const bcrypt = require('bcryptjs');
 const { User, Personnel } = require('../models');
 const { authenticate, authorize } = require('../middleware/auth');
 
+const ONLINE_WINDOW_MS = 3 * 60 * 1000;
+
 router.use(authenticate);
 router.use(authorize('admin'));
 
@@ -15,7 +17,9 @@ router.get('/', async (req, res) => {
       include: [{ model: Personnel, as: 'personnel', attributes: ['id', 'fullName', 'dharmName', 'position', 'code'] }],
       order: [['createdAt', 'DESC']],
     });
-    res.json(users);
+    // Online = active session seen within the last 3 minutes (heartbeat runs every 60s)
+    const cutoff = Date.now() - ONLINE_WINDOW_MS;
+    res.json(users.map(u => ({ ...u.toJSON(), online: !!u.isActive && !!u.lastSeenAt && new Date(u.lastSeenAt).getTime() > cutoff })));
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Lỗi server' });

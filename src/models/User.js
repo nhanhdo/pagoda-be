@@ -13,6 +13,8 @@ const User = sequelize.define('User', {
   personnelId: { type: DataTypes.INTEGER, allowNull: true },
   isActive: { type: DataTypes.BOOLEAN, defaultValue: true },
   lastLogin: { type: DataTypes.DATE, allowNull: true },
+  // Presence: refreshed (throttled) by any authenticated request + a 60s heartbeat; cleared on logout
+  lastSeenAt: { type: DataTypes.DATE, allowNull: true },
 }, {
   tableName: 'users',
   timestamps: true,

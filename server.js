@@ -9,7 +9,19 @@ async function startServer() {
     await sequelize.authenticate();
     console.log('Kết nối database thành công.');
 
+    // Seed the Buddha & Bodhisattva library only the first time its table is created
+    // (so deleting entries later doesn't bring the defaults back on restart)
+    const libraryExisted = await sequelize.getQueryInterface().describeTable('buddha_figures').then(() => true, () => false);
+
     await sequelize.sync();
+
+    if (!libraryExisted) {
+      const { BuddhaFigure } = require('./src/models');
+      if ((await BuddhaFigure.count()) === 0) {
+        await BuddhaFigure.bulkCreate(BuddhaFigure.DEFAULTS);
+        console.log(`[seed] Thư viện Phật & Bồ Tát: ${BuddhaFigure.DEFAULTS.length} mục`);
+      }
+    }
 
     if (!process.env.DATABASE_URL) {
       // Xóa bảng backup còn sót từ lần sync lỗi trước (chỉ SQLite)

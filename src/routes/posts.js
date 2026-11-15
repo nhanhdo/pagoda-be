@@ -213,11 +213,23 @@ router.post('/:id/comments', async (req, res) => {
     if (!post) return res.status(404).json({ message: 'Không tìm thấy bài viết' });
     if (!req.body.content?.trim()) return res.status(400).json({ message: 'Nội dung không được để trống' });
 
+    // Reply: attach to the thread's top-level comment (one nesting level, like Facebook)
+    let parentId = null;
+    let replyToId = null;
+    if (req.body.replyToId != null) {
+      const target = await Comment.findOne({ where: { id: req.body.replyToId, postId: post.id } });
+      if (!target) return res.status(400).json({ message: 'Bình luận được trả lời không còn tồn tại' });
+      replyToId = target.id;
+      parentId = target.parentId || target.id;
+    }
+
     const comment = await Comment.create({
-      postId: req.params.id,
+      postId: post.id,
       content: req.body.content.trim(),
       authorId: req.user?.personnelId || null,
       userId: req.user.id,
+      parentId,
+      replyToId,
     });
     const result = await Comment.findByPk(comment.id, {
       include: [
@@ -239,8 +251,15 @@ router.delete('/:postId/comments/:commentId', async (req, res) => {
     const isOwn = comment.userId === req.user.id;
     const isEditor = ['admin', 'truotri'].includes(req.user?.role);
     if (!isOwn && !isEditor) return res.status(403).json({ message: 'Không có quyền xóa' });
+    // Deleting a top-level comment removes its replies too
+    const removedIds = [comment.id];
+    if (!comment.parentId) {
+      const replies = await Comment.findAll({ where: { parentId: comment.id }, attributes: ['id'], raw: true });
+      removedIds.push(...replies.map(r => r.id));
+      if (replies.length) await Comment.destroy({ where: { parentId: comment.id } });
+    }
     await comment.destroy();
-    res.json({ message: 'Đã xóa' });
+    res.json({ message: 'Đã xóa', removedIds });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Lỗi server' });

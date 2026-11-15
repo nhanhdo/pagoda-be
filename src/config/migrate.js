@@ -60,9 +60,57 @@ async function ensureActiveSlotIndex(sequelize) {
   console.log('[migrate] Added unique index on active memorial tablet slots');
 }
 
+async function upgradeLibrary() {
+  const { BuddhaFigure } = require('../models');
+  let updated = 0; let added = 0;
+  for (const d of BuddhaFigure.DEFAULTS) {
+    const row = await BuddhaFigure.findOne({ where: { name: d.name } });
+    if (row) {
+      const patch = { seedKey: d.seedKey, sortOrder: d.sortOrder, kind: d.kind };
+      for (const k of ['intro', 'bioSections', 'vowsIntro', 'vows', 'mantraText', 'mantraPhonetic', 'mantraMeaning', 'title']) {
+        const cur = row.get(k);
+        if (cur == null || cur === '' || (Array.isArray(cur) && !cur.length)) patch[k] = d[k];
+      }
+      if (!row.feastDays?.length) patch.feastDays = d.feastDays;
+      await row.update(patch);
+      updated++;
+    } else {
+      await BuddhaFigure.create(d);
+      added++;
+    }
+  }
+  console.log(`[migrate] Thư viện Phật & Bồ Tát v2: cập nhật ${updated}, thêm ${added}`);
+}
+
 async function runMigrations(sequelize) {
   const qi = sequelize.getQueryInterface();
   const { Fund, Donation } = require('../models');
+
+  // 00. Library v2 (tabs Tiểu sử / Đại nguyện / Thần chú). The first time the new columns appear,
+  // upgrade the built-in entries in place (matched by name) and add the new ones.
+  const libDesc = await qi.describeTable('buddha_figures').catch(() => null);
+  if (libDesc) {
+    const firstV2 = !libDesc.seedKey;
+    const cols = {
+      seedKey: { type: DataTypes.STRING(40), allowNull: true },
+      intro: { type: DataTypes.TEXT, allowNull: true },
+      bioSections: { type: DataTypes.TEXT, allowNull: true },
+      vowsIntro: { type: DataTypes.TEXT, allowNull: true },
+      vows: { type: DataTypes.TEXT, allowNull: true },
+      mantraText: { type: DataTypes.TEXT, allowNull: true },
+      mantraPhonetic: { type: DataTypes.TEXT, allowNull: true },
+      mantraMeaning: { type: DataTypes.TEXT, allowNull: true },
+    };
+    for (const [col, spec] of Object.entries(cols)) await addColumnIfMissing(qi, 'buddha_figures', col, spec);
+    if (firstV2) await upgradeLibrary();
+  }
+
+  // 0. User presence
+  await addColumnIfMissing(qi, 'users', 'lastSeenAt', { type: DataTypes.DATE, allowNull: true });
+
+  // 0b. Comment replies
+  await addColumnIfMissing(qi, 'comments', 'parentId', { type: DataTypes.INTEGER, allowNull: true });
+  await addColumnIfMissing(qi, 'comments', 'replyToId', { type: DataTypes.INTEGER, allowNull: true });
 
   // 1. Donations → fund + receipt number
   await addColumnIfMissing(qi, 'donations', 'fundId', { type: DataTypes.INTEGER, allowNull: true });

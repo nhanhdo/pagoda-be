@@ -11,6 +11,7 @@ const BuddhistFollower = require('./BuddhistFollower');
 const Donation = require('./Donation');
 const Post = require('./Post');
 const Comment = require('./Comment');
+const BuddhaFigure = require('./BuddhaFigure');
 const Fund = require('./Fund');
 const Expense = require('./Expense');
 const Ceremony = require('./Ceremony');
@@ -100,4 +101,5 @@ module.exports = {
   CeremonyRegistration,
   CeremonyEntry,
   MemorialTablet,
+  BuddhaFigure,
 };

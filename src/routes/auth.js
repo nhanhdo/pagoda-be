@@ -31,7 +31,7 @@ router.post('/login', [
       return res.status(401).json({ message: 'Tên đăng nhập hoặc mật khẩu không đúng' });
     }
 
-    await user.update({ lastLogin: new Date() });
+    await user.update({ lastLogin: new Date(), lastSeenAt: new Date() });
 
     const token = jwt.sign(
       { id: user.id, role: user.role },
@@ -52,6 +52,17 @@ router.post('/login', [
     console.error(error);
     res.status(500).json({ message: 'Lỗi server' });
   }
+});
+
+// Presence heartbeat (authenticate already refreshed lastSeenAt)
+router.post('/ping', authenticate, (req, res) => res.status(204).end());
+
+// Logout: mark offline immediately (the token itself is dropped client-side)
+router.post('/logout', authenticate, async (req, res) => {
+  try {
+    await User.update({ lastSeenAt: null }, { where: { id: req.user.id }, silent: true, hooks: false });
+  } catch { /* ignore */ }
+  res.status(204).end();
 });
 
 router.get('/me', authenticate, async (req, res) => {

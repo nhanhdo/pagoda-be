@@ -30,9 +30,11 @@ app.use('/api/backup', require('./routes/backup'));
 app.use('/api/funds', require('./routes/funds'));
 app.use('/api/expenses', require('./routes/expenses'));
 app.use('/api/finance', require('./routes/finance'));
+app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/ceremonies', require('./routes/ceremonies'));
 app.use('/api/registrations', require('./routes/registrations'));
 app.use('/api/memorial-tablets', require('./routes/memorialTablets'));
+app.use('/api/library', require('./routes/library'));
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
