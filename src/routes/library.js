@@ -19,6 +19,19 @@ const upload = multer({
   fileFilter: (req, file, cb) => cb(null, /^image\//.test(file.mimetype)),
 });
 
+// multer errors (e.g. file too large) → 400 with a readable message instead of a 500
+const uploadFiles = (req, res, next) => upload.single('image')(req, res, (err) => {
+  if (!err) return next();
+  res.status(400).json({ message: err.code === 'LIMIT_FILE_SIZE' ? 'Ảnh vượt quá 8MB' : 'Không tải được ảnh lên' });
+});
+
+/** Sets data.image from the upload. Cloudinary gives a URL in file.path; disk storage a local path → serve via /uploads. */
+function takeFiles(req, data) {
+  const img = req.file;
+  if (img) data.image = /^https?:\/\//.test(img.path || '') ? img.path : `/uploads/${img.filename}`;
+  return null;
+}
+
 const EDITORS = ['admin', 'truotri', 'thuki'];
 const TEXT_FIELDS = {
   name: 120, title: 200, intro: 20000, vowsIntro: 2000,
@@ -114,11 +127,12 @@ router.get('/:id', async (req, res) => {
   res.json(row);
 });
 
-router.post('/', authorize(...EDITORS), upload.single('image'), async (req, res) => {
+router.post('/', authorize(...EDITORS), uploadFiles, async (req, res) => {
   try {
     const [data, err] = parseBody(req.body, false);
     if (err) return res.status(400).json({ message: err });
-    if (req.file) data.image = req.file.path || `/uploads/${req.file.filename}`;
+    const fileErr = takeFiles(req, data);
+    if (fileErr) return res.status(400).json({ message: fileErr });
     if (data.sortOrder === undefined) data.sortOrder = ((await BuddhaFigure.max('sortOrder')) || 0) + 1;
     const row = await BuddhaFigure.create({ ...data, createdBy: req.user.id });
     res.status(201).json(row);
@@ -128,13 +142,14 @@ router.post('/', authorize(...EDITORS), upload.single('image'), async (req, res)
   }
 });
 
-router.put('/:id', authorize(...EDITORS), upload.single('image'), async (req, res) => {
+router.put('/:id', authorize(...EDITORS), uploadFiles, async (req, res) => {
   try {
     const row = await BuddhaFigure.findByPk(req.params.id);
     if (!row) return res.status(404).json({ message: 'Không tìm thấy' });
     const [data, err] = parseBody(req.body, true);
     if (err) return res.status(400).json({ message: err });
-    if (req.file) data.image = req.file.path || `/uploads/${req.file.filename}`;
+    const fileErr = takeFiles(req, data);
+    if (fileErr) return res.status(400).json({ message: fileErr });
     await row.update(data);
     res.json(row);
   } catch (error) {

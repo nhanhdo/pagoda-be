@@ -50,6 +50,8 @@ router.put('/:id', authorize('admin', 'truotri', 'thuki'), async (req, res) => {
 router.post('/:id/participants', authorize('admin', 'truotri', 'thuki'), async (req, res) => {
   try {
     const { personnelIds = [] } = req.body;
+    const training = await Training.findByPk(req.params.id, { attributes: ['id', 'maxParticipants'] });
+    if (!training) return res.status(404).json({ message: 'Không tìm thấy khóa học' });
     // No unique index on (trainingId, personnelId), so ignoreDuplicates can't dedupe — filter existing enrolments here
     const existing = await TrainingParticipant.findAll({
       where: { trainingId: req.params.id },
@@ -58,6 +60,12 @@ router.post('/:id/participants', authorize('admin', 'truotri', 'thuki'), async (
     });
     const enrolled = new Set(existing.map(e => e.personnelId));
     const toAdd = [...new Set(personnelIds)].filter(pid => !enrolled.has(pid));
+    // Respect the course capacity (maxParticipants empty = unlimited)
+    const max = Number(training.maxParticipants) || 0;
+    if (max > 0 && existing.length + toAdd.length > max) {
+      const left = Math.max(0, max - existing.length);
+      return res.status(400).json({ message: left ? `Khóa học chỉ còn ${left} chỗ trống` : 'Khóa học đã đủ số học viên tối đa' });
+    }
     const participants = await TrainingParticipant.bulkCreate(
       toAdd.map(pid => ({ trainingId: req.params.id, personnelId: pid, registrationDate: new Date() }))
     );
